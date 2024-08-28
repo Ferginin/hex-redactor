@@ -20,6 +20,8 @@ public class HexEditor extends JFrame {
     private long currentPosition;
     private int selectedRow = -1;
     private JTextArea textArea;
+    private JFileChooser fileChooser;
+    private JLabel decimalValueLabel;
 
     public HexEditor() {
         super("Hex Editor");
@@ -76,13 +78,11 @@ public class HexEditor extends JFrame {
         hexTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
             @Override
             public void valueChanged(ListSelectionEvent e) {
-                if (!e.getValueIsAdjusting() && e.getFirstIndex() != -1) {
+                if (!e.getValueIsAdjusting() && hexTable.getSelectedRow() != -1) {
                     selectedRow = hexTable.getSelectedRow();
-                    if (selectedRow >= 0) {
-                        // Обновляем адрес в строке таблицы
-                        tableModel.setValueAt(String.format("%08X", currentPosition + (long) selectedRow * BYTES_PER_LINE), selectedRow, 1);
-                        // Обновляем данные в строке таблицы
-                        new updateRow(selectedRow, BYTES_PER_LINE, currentPosition, tableModel, fileChannel, hexTable);
+                    int selectedColumn = hexTable.getSelectedColumn();
+                    if (selectedRow >= 0 && selectedColumn >= 3) {
+                        new updateDecimalValue(selectedRow, selectedColumn - 2, tableModel, decimalValueLabel);
                     }
                 }
             }
@@ -96,7 +96,7 @@ public class HexEditor extends JFrame {
             @Override
             public void keyPressed(KeyEvent e) {
                 if (selectedRow >= 0 && e.getKeyCode() == KeyEvent.VK_ENTER) {
-                    new saveByte(selectedRow, hexTable.getSelectedColumn() - 2, BYTES_PER_LINE, currentPosition, tableModel, fileChannel, hexTable);
+                    new saveByte(selectedRow, hexTable.getSelectedColumn() - 2, BYTES_PER_LINE, currentPosition, tableModel, fileChannel, hexTable, decimalValueLabel);
                 }
             }
 
@@ -116,11 +116,19 @@ public class HexEditor extends JFrame {
         textArea.setFont(new Font("Dialog", Font.PLAIN, 14));
         textArea.setTabSize(10);
 
+        // Создаем JLabel для отображения значения байта
+        decimalValueLabel = new JLabel("Decimal Value: ");
+
+        // Добавляем таблицу, текстовую область и JLabel в основное окно
+        JPanel rightPanel = new JPanel(new BorderLayout());
+        rightPanel.add(new JScrollPane(textArea), BorderLayout.CENTER);
+        rightPanel.add(decimalValueLabel, BorderLayout.SOUTH); // Добавление нового JLabel
 
         // Добавляем таблицу и текстовую область в основное окно
         getContentPane().setLayout(new BorderLayout());
         getContentPane().add(new JScrollPane(hexTable), BorderLayout.NORTH);
-        getContentPane().add(new JScrollPane(textArea), BorderLayout.SOUTH);
+        //getContentPane().add(new JScrollPane(textArea), BorderLayout.SOUTH);
+        getContentPane().add(rightPanel, BorderLayout.EAST);
 
         // Создаем диалоговое окно выбора файла
         JFileChooser fileChooser = new JFileChooser();

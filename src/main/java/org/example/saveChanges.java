@@ -13,17 +13,17 @@ import java.nio.file.StandardOpenOption;
 public class saveChanges extends Component {
 
     // Сохраняет изменения в файл
-    public saveChanges(int BYTES_PER_LINE, long currentPosition, DefaultTableModel tableModel, FileChannel fileChannel, JTable hexTable) throws IOException {
+    public saveChanges(int BYTES_PER_LINE, long currentPosition, DefaultTableModel tableModel,
+                       FileChannel fileChannel, JTable hexTable) throws IOException {
         // Закрываем существующий канал
         if (fileChannel != null) {
             fileChannel.close();
         }
+        // Открываем файл для записи
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.showOpenDialog(this);
-        // Открываем файл для записи
         Path file = Paths.get(fileChooser.getSelectedFile().getAbsolutePath());
         fileChannel = FileChannel.open(file, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
-
         // Проходим по каждой строке таблицы
         for (int row = 0; row < hexTable.getRowCount(); row++) {
             // Получаем позицию в файле для данной строки
@@ -32,10 +32,9 @@ public class saveChanges extends Component {
             fileChannel.position(address);
             // Создаем буфер для записи данных
             ByteBuffer buffer = ByteBuffer.allocate(BYTES_PER_LINE);
-
             // Записываем данные из таблицы в буфер
             for (int i = 0; i < BYTES_PER_LINE; i++) {
-                String value = (String) tableModel.getValueAt(row, i + 2);
+                String value = (String) tableModel.getValueAt(row, i + 3);
                 if (value != null && !value.isEmpty()) {
                     try {
                         buffer.put(Byte.parseByte(value.trim(), 16)); // Проверяем, является ли значение hex числом
