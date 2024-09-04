@@ -2,7 +2,7 @@ package org.example;
 
 import javax.swing.table.DefaultTableModel;
 import java.nio.ByteBuffer;
-
+//a
 public class addRow {
 
     // Добавляет строку данных в таблицу

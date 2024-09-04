@@ -6,11 +6,11 @@ import java.awt.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-
+//a
 public class updateRow extends Component {
 
     // Обновляет строку таблицы по выбранному индексу
-    public updateRow(int row, int BYTES_PER_LINE, long currentPosition, DefaultTableModel tableModel, FileChannel fileChannel, JTable hexTable) {
+    public updateRow(int row, int BYTES_PER_LINE, long currentPosition, DefaultTableModel tableModel, FileChannel fileChannel) {
         try {
             // Получаем позицию в файле для выбранной строки
             long address = currentPosition + (long) row * BYTES_PER_LINE;
@@ -25,9 +25,9 @@ public class updateRow extends Component {
             for (int i = 0; i < BYTES_PER_LINE; i++) {
                 if (buffer.hasRemaining()) {
                     byte b = buffer.get();
-                    tableModel.setValueAt(String.format("%02X", b), row, i + 2);
+                    tableModel.setValueAt(String.format("%02X", b), row, i + 3);
                 } else {
-                    tableModel.setValueAt("00", row, i + 2); // Заполняем ячейку нулями, если данных нет
+                    tableModel.setValueAt("00", row, i + 3); // Заполняем ячейку нулями, если данных нет
                 }
             }
         } catch (IOException e) {

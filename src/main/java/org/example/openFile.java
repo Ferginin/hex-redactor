@@ -47,11 +47,14 @@ public class openFile extends Component {
                 }
 
                 // Заполняем таблицу данными
-                updateTable updateTable = new updateTable(tableModel, 16, currentPosition, fileSize, fileChannel);
+                new updateTable(tableModel, 16, currentPosition, fileSize, fileChannel);
 
             } catch (IOException e) {
                 JOptionPane.showMessageDialog(this, "Error opening file: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                // Если возникает ошибка, не обновляем fileChannel, чтобы избежать ошибки "No file open"
+                fileChannel = null;
             }
         }
     }
 }
+//a
