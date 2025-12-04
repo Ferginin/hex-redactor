@@ -1,2 +1,3 @@
-# hex-redactor
-simple hex-redactor for any files
+# Hex_editor
+
+program to edit files in hex-code

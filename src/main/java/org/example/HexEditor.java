@@ -1,119 +1,72 @@
 package org.example;
 
+import org.example.tableFuncs.*;
+import org.example.tableSettings.*;
+import org.example.workers.*;
+
 import javax.swing.*;
+import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.text.AbstractDocument;
 import java.awt.*;
 import java.awt.event.*;
-import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
-import java.util.Arrays;
+import java.io.IOException;
+import java.util.*;
 
 public class HexEditor extends JFrame {
 
+    private static final String[] DATA_SIZES = {"Free choosing", "2 bytes", "4 bytes", "8 bytes"};
     private int BYTES_PER_LINE = 16;
-    private int rows = 0; // Число строк
-    private static final String[] DATA_SIZES = {"1 byte", "2 bytes", "4 bytes", "8 bytes"};
-    private JTable hexTable;
-    private DefaultTableModel tableModel;
+    private byte[] fileContent; // Хранит весь файл в памяти
+
+    private CustomTable hexTable;
+    private final DefaultTableModel tableModel;
     private FileChannel fileChannel;
-    private long fileSize;
-    private long currentPosition;
-    private int selectedRow = -1;
     private JTextArea textArea;
-    private JFileChooser fileChooser;
-    private JLabel decimalValueLabel;
-    private JComboBox<String> dataSizeComboBox;
-    private JTextField searchField;
-    private JRadioButton exactMatchButton;
-    private JRadioButton maskMatchButton;
-    private JButton searchButton;
+    private final JComboBox<String> dataSizeComboBox;
+    private boolean changesMade = false;
+    private boolean initializationComplete = false; // Флаг для отслеживания завершения инициализации
+    private long fileSize;
+    private JButton prevPageButton;
+    private JButton nextPageButton;
+    private int currentPage = 0;
+    private final int pageSize = 100; // Количество строк на странице
+    private JLabel pageLabel;
+    private JTextField currentPageField;
+    private final ByteBuffer buffer;
+
 
     public HexEditor() {
-        super("Hex Editor");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1200, 800);
-        setLocationRelativeTo(null);
+        JFrame frame = new JFrame("Hex Editor");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        ImageIcon icon = new ImageIcon("images/hexThing.png");
+        frame.setIconImage(icon.getImage());
+        frame.setSize(1400, 800);
+        frame.setLocationRelativeTo(null);
+
+        buffer = new ByteBuffer();
 
         // Создаем разделитель
         JSeparator separator = new JSeparator(SwingConstants.HORIZONTAL);
         separator.setPreferredSize(new Dimension(1, 10));
 
         // Создаем меню
-        JMenuBar menuBar = new JMenuBar();
-        JMenu fileMenu = new JMenu("File");
-        JMenuItem openItem = new JMenuItem("Open");
-        openItem.addActionListener(e -> new openFile(tableModel, fileChannel, fileSize, currentPosition, textArea));
-        fileMenu.add(openItem);
-        JMenuItem saveItem = new JMenuItem("Save");
-        saveItem.addActionListener(e -> {
-            try {
-                new saveChanges(BYTES_PER_LINE, currentPosition, tableModel, fileChannel, hexTable);
-            } catch (IOException ex) {
-                JOptionPane.showMessageDialog(HexEditor.this, "Error saving file: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-        fileMenu.add(saveItem);
-        JMenuItem closeItem = new JMenuItem("Close");
-        closeItem.addActionListener(e -> dispose());
-        fileMenu.add(closeItem);
-        menuBar.add(fileMenu);
-        setJMenuBar(menuBar);
+        JMenuBar menuBar = getjMenuBar();
+        frame.setJMenuBar(menuBar);
 
         // Создаем элементы управления для изменения размеров таблицы
-        JLabel rowsLabel = new JLabel("Rows: ");
-        JTextField rowsField = new JTextField("0");
         JLabel colsLabel = new JLabel("Cols: ");
         JTextField colsField = new JTextField("16");
 
         // Кнопка для изменения размеров
-        JButton resizeButton = new JButton("Resize");
-        resizeButton.addActionListener(e -> {
-            try {
-                rows = Integer.parseInt(rowsField.getText());
-                BYTES_PER_LINE = Integer.parseInt(colsField.getText());
-                resizeTable();
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(HexEditor.this, "Invalid input", "Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        JButton resizeButton = getResizeButton(colsField);
 
-        // Создаем элементы управления для поиска
-        JLabel searchLabel = new JLabel("Search: ");
-        searchField = new JTextField();
-        searchField.setPreferredSize(new Dimension(200, 30));
-        exactMatchButton = new JRadioButton("Exact Match");
-        maskMatchButton = new JRadioButton("Mask Match");
-        ButtonGroup searchGroup = new ButtonGroup();
-        searchGroup.add(exactMatchButton);
-        searchGroup.add(maskMatchButton);
-        exactMatchButton.setSelected(true);
-        searchButton = new JButton("Search");
-        searchButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                search(fileChannel);
-            }
-        });
+        // Создаем выпадающий список для выбора размера данных
+        dataSizeComboBox = new JComboBox<>(DATA_SIZES);
+        dataSizeComboBox.setSelectedIndex(0); // По умолчанию 1 байт
+        dataSizeComboBox.addActionListener(e -> hexTable.setSelectionMode(dataSizeComboBox.getSelectedIndex()));
 
-        // Добавляем элементы управления для поиска на панель
-        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        searchPanel.add(searchLabel);
-        searchPanel.add(searchField);
-        searchPanel.add(exactMatchButton);
-        searchPanel.add(maskMatchButton);
-        searchPanel.add(searchButton);
-
-        // Добавляем элементы управления на панель
-        JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        controlPanel.add(rowsLabel);
-        controlPanel.add(rowsField);
-        controlPanel.add(colsLabel);
-        controlPanel.add(colsField);
-        controlPanel.add(resizeButton);
-        // Добавляем searchPanel в controlPanel
-        controlPanel.add(searchPanel);
 
         // Создаем модель таблицы
         tableModel = new DefaultTableModel() {
@@ -123,103 +76,135 @@ public class HexEditor extends JFrame {
             }
         };
 
-        String[] columnNames = new String[BYTES_PER_LINE + 3]; // +3 для нумерации строк и заголовка
-        columnNames[0] = "No";   // Нумерация строк
-        columnNames[1] = "Address"; // Адрес
-        columnNames[2] = "Hex"; // Заголовок для hex данных
-        for (int i = 0; i < BYTES_PER_LINE; i++) {
-            columnNames[i + 3] = String.valueOf(i + 1); // Нумерация столбцов (1, 2, 3 ...)
-        }
-        tableModel.setColumnIdentifiers(columnNames);
-
-        // Создаем выпадающий список для выбора размера данных
-        dataSizeComboBox = new JComboBox<>(DATA_SIZES);
-        dataSizeComboBox.setSelectedIndex(0); // По умолчанию 1 байт
-        dataSizeComboBox.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (selectedRow != -1) {
-                    new updateDecimalValue(selectedRow, hexTable.getSelectedColumn(), dataSizeComboBox, tableModel, decimalValueLabel);
+        // Добавляем слушатель событий к модели таблицы
+        tableModel.addTableModelListener(e -> {
+            if (e.getType() == TableModelEvent.UPDATE) {
+                if (initializationComplete) {
+                    new FileContentUpdater(getThis()).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+                    TextAreaHandler.updateTextArea(tableModel, textArea);
+                    changesMade = true;
                 }
             }
         });
-
-        // Создаем JLabel для отображения значения байта
-        decimalValueLabel = new JLabel("Decimal Value: ");
-
-        // Создаем таблицу
-        hexTable = new JTable(tableModel) {
-            @Override
-            public boolean getScrollableTracksViewportWidth() {
-                return getPreferredSize().width < getParent().getWidth();
-            }
-        };
-
-        hexTable.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                int selectedRow = hexTable.getSelectedRow();
-                int selectedColumn = hexTable.getSelectedColumn();
-                new updateDecimalValue(selectedRow, selectedColumn, dataSizeComboBox, tableModel, decimalValueLabel);
-            }
-        });
-
-        hexTable.addKeyListener(new KeyListener() {
-            @Override
-            public void keyTyped(KeyEvent e) {
-            }
-
-            @Override
-            public void keyPressed(KeyEvent e) {
-                if (selectedRow >= 0 && e.getKeyCode() == KeyEvent.VK_ENTER) {
-                    new saveByte(selectedRow, hexTable.getSelectedColumn(), BYTES_PER_LINE, currentPosition, tableModel, fileChannel, hexTable, decimalValueLabel, dataSizeComboBox);
-                }
-            }
-
-            @Override
-            public void keyReleased(KeyEvent e) {
-            }
-        });
-
-        hexTable.getColumnModel().getColumn(0).setPreferredWidth(30); // Ширина колонки нумерации
-        hexTable.getColumnModel().getColumn(1).setPreferredWidth(80); // Ширина колонки адреса
-        hexTable.getColumnModel().getColumn(2).setPreferredWidth(BYTES_PER_LINE * 3 + 10); // Ширина колонки hex
 
         // Создаем текстовую область
-        textArea = new JTextArea(15, 20);
+        textArea = new JTextArea(10, 20);
         textArea.setEditable(false); // Запрещаем редактирование
         textArea.setLineWrap(true);
         textArea.setFont(new Font("Dialog", Font.PLAIN, 14));
         textArea.setTabSize(10);
 
+        // Создаем таблицу
+        hexTable = new CustomTable(tableModel) {
+            @Override
+            public boolean getScrollableTracksViewportWidth() {
+                return getPreferredSize().width < getParent().getWidth();
+            }
 
+            @Override
+            public void changeSelection(int rowIndex, int columnIndex, boolean toggle, boolean extend) {
+                if (columnIndex >= 3) { // Разрешаем выбор только колонок данных
+                    super.changeSelection(rowIndex, columnIndex, toggle, extend);
+                }
+            }
+        };
+        hexTable.setCellSelectionEnabled(true);
+        hexTable.getTableHeader().setReorderingAllowed(false);
 
-        // Добавляем текстовую область, выбор размера блока и
-        // десятичное отображение в отдельное окно
-        JPanel rightPanel = new JPanel(new BorderLayout());
-        rightPanel.add(dataSizeComboBox, BorderLayout.NORTH); // Добавление JComboBox
-        rightPanel.add(new JScrollPane(textArea), BorderLayout.CENTER);
-        rightPanel.add(decimalValueLabel, BorderLayout.SOUTH); // Добавление нового JLabel
+        new SelectionHandler(textArea, hexTable);
 
-        // Добавляем все области в основное окно
-        getContentPane().setLayout(new BorderLayout());
-        getContentPane().add(new JScrollPane(hexTable), BorderLayout.NORTH);
-        getContentPane().add(rightPanel, BorderLayout.EAST);
-        getContentPane().add(controlPanel, BorderLayout.SOUTH);
-        getContentPane().add(separator, BorderLayout.CENTER);
+        // Создаем элементы управления для поиска
+        JLabel searchLabel = new JLabel("Search: ");
+        JTextField searchField = new JTextField("Пример: 52 61 ? 42 *", 20);
+        // Устанавливаем серый цвет для подсказки
+        searchField.setForeground(Color.GRAY);
+        // обработка поля поиска
+        searchField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (searchField.getText().equals("Пример: 52 61 ? 42 *")) {
+                    searchField.setText("");
+                    searchField.setForeground(Color.BLACK);
+                }
+            }
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (searchField.getText().isEmpty()) {
+                    searchField.setText("Пример: 52 61 ? 42 *");
+                    searchField.setForeground(Color.GRAY);
+                }
+            }
+        });
 
+        JRadioButton exactMatchButton = new JRadioButton("Exact Match");
+        JRadioButton maskMatchButton = new JRadioButton("Mask Match");
+        SearchBytes byteSearch = new SearchBytes(hexTable, searchField, exactMatchButton, maskMatchButton, textArea);
+        ButtonGroup searchGroup = new ButtonGroup();
+        searchGroup.add(exactMatchButton);
+        searchGroup.add(maskMatchButton);
+        exactMatchButton.setSelected(true);
+        JButton searchButton = new JButton("Search");
+        searchButton.addActionListener(e -> byteSearch.Search());
 
-        // Создаем диалоговое окно выбора файла
-        JFileChooser fileChooser = new JFileChooser();
+        // Создаем JTextPane для отображения выделенных данных
+        JTextArea selectionView = new JTextArea();
+        JScrollPane scrollPaneDecimalValue = new JScrollPane(selectionView);
+        scrollPaneDecimalValue.setPreferredSize(new Dimension(300, 60));
+        new DecimalValue(hexTable, selectionView);
 
-        setVisible(true);
+        // Создаем нижнюю панель с GridBagLayout
+        JPanel bottomPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(5, 5, 5, 5); // Отступы между элементами
 
-    }
+        // Массив элементов для добавления на панель
+        Component[] components = {
+                searchLabel, searchField, exactMatchButton, maskMatchButton, searchButton,
+                colsLabel, colsField, resizeButton,
+                dataSizeComboBox, scrollPaneDecimalValue
+        };
 
-    // Метод для изменения размеров таблицы
-    private void resizeTable() {
-        // Обновляем модель таблицы
-        tableModel.setColumnCount(BYTES_PER_LINE + 3);
+        // Добавляем элементы на нижнюю панель
+        for (int i = 0; i < components.length; i++) {
+            gbc.gridx = i;
+            gbc.gridy = 0;
+            bottomPanel.add(components[i], gbc);
+        }
+
+        // Добавляем нижнюю панель на основную панель
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
+
+        // обработчик закрытия программы
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (changesMade) {
+                    changesMade = false;
+                    int result = JOptionPane.showConfirmDialog(frame,
+                            "Do you want to save the changes?",
+                            "Save Changes",
+                            JOptionPane.YES_NO_CANCEL_OPTION);
+                    if (result == JOptionPane.YES_OPTION) {
+                        try {
+                            new FileContentUpdater(getThis()).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+                            new SaveChanges(fileChannel).save(false, getThis());
+                            System.exit(0);
+                        } catch (IOException ex) {
+                            JOptionPane.showMessageDialog(frame, "Error saving file: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                        }
+                    } else if (result == JOptionPane.NO_OPTION) {
+                        System.exit(0);
+                    } else if (result == JOptionPane.CANCEL_OPTION || result == JOptionPane.CLOSED_OPTION) {
+                        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // Не закрывать окно, если пользователь отменил или закрыл окно
+                    }
+                } else {
+                    System.exit(0);
+                }
+            }
+        });
+
         String[] columnNames = new String[BYTES_PER_LINE + 3]; // +3 для нумерации строк и заголовка
         columnNames[0] = "No";   // Нумерация строк
         columnNames[1] = "Address"; // Адрес
@@ -229,159 +214,355 @@ public class HexEditor extends JFrame {
         }
         tableModel.setColumnIdentifiers(columnNames);
 
-        // Устанавливаем новое количество строк
-        tableModel.setRowCount(rows);
-
-        // Обновляем данные в таблице
-        if (fileChannel != null) {
-            updateHexTable(tableModel, fileChannel, fileSize, currentPosition);
+        // Устанавливаем рендерер для всех колонок таблицы
+        for (int i = 0; i < hexTable.getColumnCount(); i++) {
+            hexTable.getColumnModel().getColumn(i).setCellRenderer(new HexTableCellRenderer());
         }
-    }
-    //a
-    private void updateHexTable(DefaultTableModel tableModel, FileChannel fileChannel, long fileSize, long currentPosition) {
-        try {
-            // Очищаем таблицу
-            tableModel.setRowCount(0);
 
-            // Читаем данные из файла
-            ByteBuffer buffer = ByteBuffer.allocate(BYTES_PER_LINE);
-            buffer.order(ByteOrder.LITTLE_ENDIAN);
-            long remainingBytes = fileSize - currentPosition;
-            long currentLine = 0;
-            while (remainingBytes > 0) {
-                int bytesToRead = (int) Math.min(BYTES_PER_LINE, remainingBytes);
-                fileChannel.position(currentPosition + currentLine * BYTES_PER_LINE);
-                fileChannel.read(buffer);
-                buffer.flip();
+        // Устанавливаем редактор для всех колонок таблицы
+        for (int i = 3; i < hexTable.getColumnCount(); i++) {
+            hexTable.getColumnModel().getColumn(i).setCellEditor(new HexTableCellEditor());
+        }
 
-                // Добавляем новую строку в таблицу
-                Object[] rowData = new Object[BYTES_PER_LINE + 3];
-                rowData[0] = currentLine; // Нумерация строк
-                rowData[1] = String.format("%08X", currentPosition + currentLine * BYTES_PER_LINE); // Адрес
-                rowData[2] = "Hex"; // Заголовок для hex данных
-                for (int i = 0; i < bytesToRead; i++) {
-                    rowData[i + 3] = String.format("%02X", buffer.get() & 0xFF); // Шестнадцатеричное значение
+        // устанавливаем сочетания клавиш
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control C"), "copy");
+        hexTable.getActionMap().put("copy", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    copySelection();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
                 }
-                tableModel.addRow(rowData);
-
-                currentLine++;
-                remainingBytes -= BYTES_PER_LINE;
-                buffer.clear();
             }
+        });
 
-            // Добавляем пустые строки, если нужно
-            while (currentLine < rows) {
-                Object[] rowData = new Object[BYTES_PER_LINE + 3];
-                rowData[0] = currentLine; // Нумерация строк
-                rowData[1] = String.format("%08X", currentPosition + currentLine * BYTES_PER_LINE); // Адрес
-                rowData[2] = "Hex"; // Заголовок для hex данных
-                Arrays.fill(rowData, 3, BYTES_PER_LINE + 3, "00"); // Заполняем пустые ячейки нулями
-                tableModel.addRow(rowData);
-                currentLine++;
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control X"), "cutWithZeroing");
+        hexTable.getActionMap().put("cutWithZeroing", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    cutSelectionWithZeroing();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
             }
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(HexEditor.this, "Error reading file: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-        }
+        });
+
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control shift X"), "cutWithShift");
+        hexTable.getActionMap().put("cutWithShift", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    cutSelectionWithShift();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                    Set<Point> selectedCells = hexTable.getSelectedCells();
+                    selectedCells.clear();
+                    updateCurrentPageLabel(currentPage + 1);
+                    updatePageLabel();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
+            }
+        });
+
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("DELETE"), "deleteWithZeroing");
+        hexTable.getActionMap().put("deleteWithZeroing", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    deleteSelectionWithZeroing();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
+            }
+        });
+
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control DELETE"), "deleteWithShift");
+        hexTable.getActionMap().put("deleteWithShift", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    deleteSelectionWithShift();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                    Set<Point> selectedCells = hexTable.getSelectedCells();
+                    selectedCells.clear();
+                    updateCurrentPageLabel(currentPage + 1);
+                    updatePageLabel();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
+            }
+        });
+
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control V"), "pasteWithReplace");
+        hexTable.getActionMap().put("pasteWithReplace", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    pasteSelectionWithReplace();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
+            }
+        });
+
+        hexTable.getInputMap().put(KeyStroke.getKeyStroke("control shift V"), "pasteWithoutReplace");
+        hexTable.getActionMap().put("pasteWithoutReplace", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    pasteSelectionWithoutReplace();
+                    new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, getThis()).execute();
+                    updateCurrentPageLabel(currentPage + 1);
+                    updatePageLabel();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
+            }
+        });
+
+        hexTable.getColumnModel().getColumn(0).setPreferredWidth(40); // Ширина колонки нумерации
+        hexTable.getColumnModel().getColumn(1).setPreferredWidth(80); // Ширина колонки адреса
+        hexTable.getColumnModel().getColumn(2).setPreferredWidth(BYTES_PER_LINE * 3 + 10); // Ширина колонки hex
+
+        // Добавляем все области в основное окно
+        frame.setLayout(new BorderLayout());
+        frame.add(new JScrollPane(hexTable), BorderLayout.NORTH);
+        frame.add(new JScrollPane(textArea), BorderLayout.CENTER);
+        frame.add(mainPanel, BorderLayout.SOUTH);
+        frame.add(separator, BorderLayout.EAST);
+
+        frame.setVisible(true);
+        initializationComplete = true;
     }
 
-    private void search(FileChannel fileChannel) {
-        if (fileChannel == null) {
-            JOptionPane.showMessageDialog(this, "No file open", "Error", JOptionPane.ERROR_MESSAGE);
+    private JButton getResizeButton(JTextField colsField) {
+        JButton resizeButton = new JButton("Resize");
+        resizeButton.addActionListener(e -> {
+            try {
+                if(Integer.parseInt(colsField.getText()) != BYTES_PER_LINE && Integer.parseInt(colsField.getText()) > 0) {
+                    BYTES_PER_LINE = Integer.parseInt(colsField.getText());
+                    Set<Point> selectedCells = hexTable.getSelectedCells();
+                    selectedCells.clear();
+
+                    ResizeTable resizer = new ResizeTable();
+                    currentPage = 0;
+                    if (textArea != null) {
+                        textArea.setText(""); // Очищаем текстовую область
+                    }
+                    resizer.resize(tableModel, BYTES_PER_LINE);
+                    loadPage(currentPage);
+                    updateCurrentPageLabel(currentPage + 1);
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(HexEditor.this, "Invalid input", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        return resizeButton;
+    }
+
+    private JMenuBar getjMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+        JMenu fileMenu = new JMenu("File");
+        JMenuItem openItem = new JMenuItem("Open");
+        openItem.addActionListener(e -> {
+            OpenFile openObject = new OpenFile(fileChannel, fileSize);
+            openObject.open(tableModel, textArea, this);
+            fileChannel = openObject.getFileChannel();
+            fileSize = openObject.getFileSize();
+        });
+        fileMenu.add(openItem);
+        JMenuItem saveItem = new JMenuItem("Save");
+        saveItem.addActionListener(e -> {
+            try {
+                new FileContentUpdater(this).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+                new SaveChanges(fileChannel).save(false, this);
+                changesMade = false;
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(HexEditor.this, "Error saving file: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        fileMenu.add(saveItem);
+        JMenuItem saveAsItem = new JMenuItem("Save As");
+        saveAsItem.addActionListener(e -> {
+            try {
+                new FileContentUpdater(this).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+                new SaveChanges(fileChannel).save(true, this);
+                changesMade = false;
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(HexEditor.this, "Error saving file: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        fileMenu.add(saveAsItem);
+        JMenuItem closeItem = new JMenuItem("Close");
+        closeItem.addActionListener(e -> System.exit(0));
+        fileMenu.add(closeItem);
+
+        // Создаем кнопки для навигации по страницам
+        prevPageButton = new JButton("Previous Page");
+        nextPageButton = new JButton("Next Page");
+        pageLabel = new JLabel("Page 1/" + updateNavigationButtons());
+        // создаем поле для ввода номера страницы
+        currentPageField = new JTextField(6);
+        currentPageField.setHorizontalAlignment(JTextField.CENTER);
+        currentPageField.setText("1");
+        // Применяем фильтр к текстовому полю
+        AbstractDocument doc = (AbstractDocument) currentPageField.getDocument();
+        doc.setDocumentFilter(new DigitOnlyDocumentFilter());
+
+        // Добавляем слушатели для кнопок навигации
+        prevPageButton.addActionListener(e -> {
+            new FileContentUpdater(this).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+            Set<Point> selectedCells = hexTable.getSelectedCells();
+            selectedCells.clear();
+            loadPage(currentPage - 1);
+            updateCurrentPageLabel(currentPage + 1);
+        });
+        nextPageButton.addActionListener(e -> {
+            new FileContentUpdater(this).updateFileContent(tableModel, BYTES_PER_LINE, currentPage, pageSize);
+            Set<Point> selectedCells = hexTable.getSelectedCells();
+            selectedCells.clear();
+            loadPage(currentPage + 1);
+            updateCurrentPageLabel(currentPage + 1);
+        });
+        // слушатель для поля с номером страницы
+        currentPageField.addActionListener(e -> {
+            try {
+                currentPage = Integer.parseInt(currentPageField.getText());
+                int totalPages = updateNavigationButtons();
+                if (currentPage > 0 && currentPage <= totalPages) {
+                    Set<Point> selectedCells = hexTable.getSelectedCells();
+                    selectedCells.clear();
+                    loadPage(currentPage - 1);
+                } else {
+                    JOptionPane.showMessageDialog(null, "Введите корректный номер страницы.");
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(null, "Некорректный номер страницы.");
+            }
+        });
+
+        // Добавляем кнопки на панель
+        JPanel navigationPanel = new JPanel(new FlowLayout());
+        navigationPanel.add(prevPageButton);
+        navigationPanel.add(nextPageButton);
+        navigationPanel.add(pageLabel);
+        navigationPanel.add(currentPageField);
+        menuBar.add(fileMenu);
+        menuBar.add(navigationPanel);
+        return menuBar;
+    }
+
+    private  void copySelection() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
             return;
         }
 
-        String searchPattern = searchField.getText().trim();
+        new CopyWorker(buffer, this).copy(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
+    }
 
-        // Проверяем, не пуст ли ввод
-        if (searchPattern.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please enter a search pattern", "Error", JOptionPane.ERROR_MESSAGE);
+    // вырезка с обнулением
+    private void cutSelectionWithZeroing() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
             return;
         }
 
-        try {
-            // Преобразуем поисковый шаблон в байты
-            byte[] searchBytes = hexStringToBytes(searchPattern);
-
-            // Определяем, использовать точное совпадение или маску
-            boolean useMask = maskMatchButton.isSelected();
-
-            // Выполняем поиск
-            long foundAddress = findBytes(searchBytes, currentPosition, useMask);
-
-            if (foundAddress != -1) {
-                //  Отображаем адрес найденного совпадения
-                JOptionPane.showMessageDialog(this, "Found at address: " + String.format("%08X", foundAddress), "Search Result", JOptionPane.INFORMATION_MESSAGE);
-
-                // Перемещаем курсор в таблице на найденную строку
-                int row = (int) ((foundAddress - currentPosition) / BYTES_PER_LINE);
-                hexTable.getSelectionModel().setSelectionInterval(row, row);
-            } else {
-                JOptionPane.showMessageDialog(this, "Not found", "Search Result", JOptionPane.INFORMATION_MESSAGE);
-            }
-        } catch (IllegalArgumentException | IOException e) {
-            JOptionPane.showMessageDialog(this, "Invalid search pattern", "Error", JOptionPane.ERROR_MESSAGE);
-        }
+        new CutWorker(buffer, this).cut(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
     }
 
-    // Метод для преобразования шестнадцатеричной строки в массив байт
-    private byte[] hexStringToBytes(String hexString) {
-        if (hexString.length() % 2 != 0) {
-            throw new IllegalArgumentException("Invalid hex string length");
+    // вырезка со сдвигом
+    private void cutSelectionWithShift() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
+            return;
         }
-        byte[] bytes = new byte[hexString.length() / 2];
-        for (int i = 0; i < hexString.length(); i += 2) {
-            String hexValue = hexString.substring(i, i + 2);
-            bytes[i / 2] = (byte) Integer.parseInt(hexValue, 16);
-        }
-        return bytes;
+
+        new CutWithShiftWorker(buffer, this).cutBytes(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
     }
 
-    // Метод для поиска последовательности байт в файле
-    private long findBytes(byte[] searchBytes, long startPosition, boolean useMask) throws IOException {
-        fileChannel.position(startPosition);
-        ByteBuffer buffer = ByteBuffer.allocate(BYTES_PER_LINE);
-        while (fileChannel.position() < fileChannel.size()) {
-            fileChannel.read(buffer);
-            buffer.flip();
-            if (useMask) {
-                // Поиск по маске
-                if (matchMask(buffer, searchBytes)) {
-                    return fileChannel.position() - BYTES_PER_LINE;
-                }
-            } else {
-                // Точное совпадение
-                if (matchBytes(buffer, searchBytes)) {
-                    return fileChannel.position() - BYTES_PER_LINE;
-                }
-            }
-            buffer.clear();
+    // удаление с обнулением
+    private void deleteSelectionWithZeroing() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
+            return;
         }
-        return -1; // Совпадение не найдено
+
+        new DeleteWorker(this).removeBytesWithPadding(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
     }
 
-    // Метод для сравнения байт с точным совпадением
-    private boolean matchBytes(ByteBuffer buffer, byte[] searchBytes) {
-        if (buffer.remaining() < searchBytes.length) {
-            return false;
+    // удаление со сдвигом
+    private void deleteSelectionWithShift() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
+            return;
         }
-        for (int i = 0; i < searchBytes.length; i++) {
-            if (buffer.get() != searchBytes[i]) {
-                return false;
-            }
-        }
-        return true;
+
+        new DeleteWithShiftWorker(this).removeBytes(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
     }
 
-    // Метод для сравнения байт с использованием маски
-    private boolean matchMask(ByteBuffer buffer, byte[] searchBytes) {
-        if (buffer.remaining() < searchBytes.length) {
-            return false;
+    // вставка с заменой
+    private void pasteSelectionWithReplace() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
+            return;
         }
-        for (int i = 0; i < searchBytes.length; i++) {
-            if ((searchBytes[i] & 0xFF) != 0 && (buffer.get() & 0xFF) != (searchBytes[i] & 0xFF)) {
-                return false;
-            }
+        new PasteWorker(buffer, this).replaceBytes(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
+    }
+
+    // вставка со сдвигом
+    private void pasteSelectionWithoutReplace() throws IOException {
+        Set<Point> selectedCells = hexTable.getSelectedCells();
+        if (selectedCells.isEmpty()) {
+            return;
         }
-        return true;
+        new PasteWithShiftWorker(buffer, this).insertBytes(selectedCells, BYTES_PER_LINE, currentPage, pageSize);
+    }
+
+    public void loadPage(int page) {
+        if (page < 0) {
+            page = 0;
+        }
+        currentPage = page;
+        new FileLoader(BYTES_PER_LINE, tableModel, textArea, fileSize, currentPage, pageSize, this).execute();
+        updatePageLabel();
+        updateNavigationButtons();
+    }
+
+    public void updateCurrentPageLabel(int currentPage) {
+        currentPageField.setText(String.valueOf(currentPage));
+    }
+
+    public void updatePageLabel() {
+        pageLabel.setText("Page " + (currentPage + 1) + "/" + updateNavigationButtons());
+    }
+
+    public int updateNavigationButtons() {
+        int totalPages = (int) Math.ceil((double) fileSize / (pageSize * BYTES_PER_LINE));
+        prevPageButton.setEnabled(currentPage > 0);
+        nextPageButton.setEnabled(currentPage < totalPages - 1);
+
+        return totalPages;
+    }
+
+    public void setFileSize(long fileSize) {
+        this.fileSize = fileSize;
+    }
+
+    public void setFileContent(byte[] fileContent) {
+        this.fileContent = fileContent;
+    }
+
+    public byte[] getFileContent() {
+        return fileContent;
+    }
+
+    public HexEditor getThis() {
+        return this;
     }
 }

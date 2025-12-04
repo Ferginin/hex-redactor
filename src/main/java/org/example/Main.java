@@ -4,6 +4,10 @@ import javax.swing.*;
 
 public class Main {
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(HexEditor::new);
+        try {
+            SwingUtilities.invokeLater(HexEditor::new);
+        } catch (Exception e) {
+            System.err.println("Error initializing application: " + e.getMessage());
+        }
     }
 }
